@@ -320,13 +320,22 @@ class Tree(object):
         return new_tree
 
 
-    def pruning_order(self):
+    @property
+    def leaves(self):
+        return _get_leaves(self.children)
+
+    def pruning_order(self, max_to_prune=None):
         """
         Compute the order for which the tree should be pruned.
 
         The algorithm used is weakest link pruning. It removes first the nodes
         that improve the tree the least.
 
+
+        Parameters
+        ----------
+        max_to_prune : int, optional (default=all the nodes)
+            maximum number of nodes to prune
 
         Returns
         -------
@@ -341,6 +350,9 @@ class Tree(object):
 
         """
 
+        if max_to_prune is None:
+            max_to_prune = self.node_count
+
         children = self.children.copy()
         nodes = list()
 
@@ -348,7 +360,7 @@ class Tree(object):
             node = _next_to_prune(self, children)
             nodes.append(node)
 
-            if node == 0:
+            if (len(nodes) == max_to_prune) or (node == 0):
                 return np.array(nodes)
 
             #Remove the subtree from the children array
@@ -379,9 +391,8 @@ class Tree(object):
 
         """
 
-        nodes = self.pruning_order()
-        to_remove_count = len(nodes) - n_leaves + 1
-        nodes_to_remove = nodes[:to_remove_count]
+        to_remove_count = self.node_count - len(self.leaves) - n_leaves
+        nodes_to_remove = self.pruning_order(to_remove_count)
 
         out_tree = self._copy()
 
@@ -389,7 +400,7 @@ class Tree(object):
             #TODO: Add a Tree method to remove a branch of a tree
             out_tree.children[out_tree.children[node], :] = Tree.UNDEFINED
             out_tree.children[node, :] = Tree.LEAF
-            out_tree.node_count -= 1
+            out_tree.node_count -= 2
 
         return out_tree
 
@@ -1317,3 +1328,4 @@ def cv_scores_vs_n_leaves(clf, X, y, max_n_leaves=10, cv=10):
         scores.append(loc_scores)
 
     return zip(*scores)
+
