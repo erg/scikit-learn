@@ -8,6 +8,7 @@ from .tree import DecisionTreeRegressor
 from .tree import ExtraTreeClassifier
 from .tree import ExtraTreeRegressor
 from .tree import export_graphviz
+from .tree import cv_scores_vs_n_leaves
 
 __all__ = ["DecisionTreeClassifier", "DecisionTreeRegressor",
            "ExtraTreeClassifier", "ExtraTreeRegressor", "export_graphviz"]

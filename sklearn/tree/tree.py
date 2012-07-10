@@ -150,6 +150,406 @@ def export_graphviz(decision_tree, out_file=None, feature_names=None):
     return out_file
 
 
+#Helper functions for the pruning algorithm
+def _get_leaves(children):
+    """Lists the leaves from the children array of a tree object"""
+    return np.where(np.all(children == Tree.LEAF, axis=1))[0]
+
+def _get_terminal_nodes(children):
+    """Lists the nodes that only have leaves as children"""
+    leaves = _get_leaves(children)
+    child_is_leaf = np.in1d(children, leaves).reshape(children.shape)
+    return np.where(np.all(child_is_leaf, axis=1))[0]
+
+def _next_to_prune(tree, children=None):
+    """Weakest link pruning for the subtree defined by children"""
+
+    if children is None:
+        children = tree.children
+
+    t_nodes = _get_terminal_nodes(children)
+    g_i = tree.init_error[t_nodes] - tree.best_error[t_nodes]
+
+    #alpha_i = np.min(g_i) / len(t_nodes)
+
+    return t_nodes[np.argmin(g_i)]
+
+
+class Tree(object):
+    """Struct-of-arrays representation of a binary decision tree.
+
+    The binary tree is represented as a number of parallel arrays.
+    The i-th element of each array holds information about the
+    node `i`. You can find a detailed description of all arrays
+    below. NOTE: Some of the arrays only apply to either leaves or
+    split nodes, resp. In this case the values of nodes of the other
+    type are arbitrary!
+
+    Attributes
+    ----------
+    node_count : int
+        Number of nodes (internal nodes + leaves) in the tree.
+
+    children : np.ndarray, shape=(node_count, 2), dtype=int32
+        `children[i, 0]` holds the node id of the left child of node `i`.
+        `children[i, 1]` holds the node id of the right child of node `i`.
+        For leaves `children[i, 0] == children[i, 1] == Tree.LEAF == -1`.
+
+    feature : np.ndarray of int32
+        The feature to split on (only for internal nodes).
+
+    threshold : np.ndarray of float64
+        The threshold of each node (only for leaves).
+
+    value : np.ndarray of float64, shape=(capacity, n_classes)
+        Contains the constant prediction value of each node.
+
+    best_error : np.ndarray of float64
+        The error of the (best) split.
+        For leaves `init_error == `best_error`.
+
+    init_error : np.ndarray of float64
+        The initial error of the node (before splitting).
+        For leaves `init_error == `best_error`.
+
+    n_samples : np.ndarray of np.int32
+        The number of samples at each node.
+    """
+
+    LEAF = -1
+    UNDEFINED = -2
+
+    def __init__(self, n_classes, n_features, capacity=3):
+        self.n_classes = n_classes
+        self.n_features = n_features
+
+        self.node_count = 0
+
+        self.children = np.empty((capacity, 2), dtype=np.int32)
+        self.children.fill(Tree.UNDEFINED)
+
+        self.feature = np.empty((capacity,), dtype=np.int32)
+        self.feature.fill(Tree.UNDEFINED)
+
+        self.threshold = np.empty((capacity,), dtype=np.float64)
+        self.value = np.empty((capacity, n_classes), dtype=np.float64)
+
+        self.best_error = np.empty((capacity,), dtype=np.float32)
+        self.init_error = np.empty((capacity,), dtype=np.float32)
+        self.n_samples = np.empty((capacity,), dtype=np.int32)
+
+    def _resize(self, capacity=None):
+        """Resize tree arrays to `capacity`, if `None` double capacity. """
+        if capacity is None:
+            capacity = int(self.children.shape[0] * 2.0)
+
+        if capacity == self.children.shape[0]:
+            return
+
+        self.children.resize((capacity, 2), refcheck=False)
+        self.feature.resize((capacity,), refcheck=False)
+        self.threshold.resize((capacity,), refcheck=False)
+        self.value.resize((capacity, self.value.shape[1]), refcheck=False)
+        self.best_error.resize((capacity,), refcheck=False)
+        self.init_error.resize((capacity,), refcheck=False)
+        self.n_samples.resize((capacity,), refcheck=False)
+
+        # if capacity smaller than node_count, adjust the counter
+        if capacity < self.node_count:
+            self.node_count = capacity
+
+    def _add_split_node(self, parent, is_left_child, feature, threshold,
+                        best_error, init_error, n_samples, value):
+        """Add a splitting node to the tree. The new node registers itself as
+        the child of its parent. """
+        node_id = self.node_count
+        if node_id >= self.children.shape[0]:
+            self._resize()
+
+        self.feature[node_id] = feature
+        self.threshold[node_id] = threshold
+
+        self.init_error[node_id] = init_error
+        self.best_error[node_id] = best_error
+        self.n_samples[node_id] = n_samples
+        self.value[node_id] = value
+
+        # set as left or right child of parent
+        if parent > Tree.LEAF:
+            if is_left_child:
+                self.children[parent, 0] = node_id
+            else:
+                self.children[parent, 1] = node_id
+
+        self.node_count += 1
+        return node_id
+
+    def _add_leaf(self, parent, is_left_child, value, error, n_samples):
+        """Add a leaf to the tree. The new node registers itself as the
+        child of its parent. """
+        node_id = self.node_count
+        if node_id >= self.children.shape[0]:
+            self._resize()
+
+        self.value[node_id] = value
+        self.n_samples[node_id] = n_samples
+        self.init_error[node_id] = error
+        self.best_error[node_id] = error
+
+        if is_left_child:
+            self.children[parent, 0] = node_id
+        else:
+            self.children[parent, 1] = node_id
+
+        self.children[node_id, :] = Tree.LEAF
+
+        self.node_count += 1
+        return node_id
+
+    def _copy(self):
+        new_tree = Tree(self.n_classes, self.n_features)
+        new_tree.node_count = self.node_count
+        new_tree.children = self.children.copy()
+        new_tree.feature = self.feature.copy()
+        new_tree.threshold = self.threshold.copy()
+        new_tree.value = self.value.copy()
+        new_tree.best_error = self.best_error.copy()
+        new_tree.init_error = self.init_error.copy()
+        new_tree.n_samples = self.n_samples.copy()
+
+        return new_tree
+
+
+    def pruning_order(self):
+        """
+        Compute the order for which the tree should be pruned.
+
+        The algorithm used is weakest link pruning. It removes first the nodes
+        that improve the tree the least.
+
+
+        Parameters
+        ----------
+        tree : binary tree object
+            The binary tree for which to compute the complexity costs.
+
+        Returns
+        -------
+        nodes : numpy array
+            list of the nodes to remove to get to the optimal subtree.
+
+        References
+        ----------
+
+        .. [1] J. Friedman and T. Hastie, "The elements of statistical
+        learning", 2001, section 9.2.1
+
+        """
+
+        children = self.children.copy()
+        nodes = list()
+
+        while True:
+            node = _next_to_prune(self, children)
+            nodes.append(node)
+
+            if node == 0:
+                return np.array(nodes)
+
+            #Remove the subtree from the children array
+            children[children[node], :] = Tree.UNDEFINED
+            children[node, :] = Tree.LEAF
+
+    def prune(self, n_leaves):
+        """
+        Prunes the tree in order to obtain the optimal tree with n_leaves
+        leaves.
+
+
+        Parameters
+        ----------
+        n_leaves : binary tree object
+            The final number of leaves the algorithm should bring
+
+        Returns
+        -------
+        tree : a Tree object
+            returns a new, pruned, tree
+
+        References
+        ----------
+
+        .. [1] J. Friedman and T. Hastie, "The elements of statistical
+        learning", 2001, section 9.2.1
+
+        """
+
+        nodes = self.pruning_order()
+        to_remove_count = len(nodes) - n_leaves + 1
+        nodes_to_remove = nodes[:to_remove_count]
+
+        out_tree = self._copy()
+
+        for node in nodes_to_remove:
+            #TODO: Add a Tree method to remove a branch of a tree
+            out_tree.children[out_tree.children[node], :] = Tree.UNDEFINED
+            out_tree.children[node, :] = Tree.LEAF
+            out_tree.node_count -= 1
+
+        return out_tree
+
+
+    def build(self, X, y, criterion, max_depth, min_samples_split,
+              min_samples_leaf, min_density, max_features, random_state,
+              find_split, sample_mask=None, X_argsorted=None):
+        # Recursive algorithm
+        def recursive_partition(X, X_argsorted, y, sample_mask, depth,
+                                parent, is_left_child):
+            # Count samples
+            n_node_samples = sample_mask.sum()
+
+            if n_node_samples == 0:
+                raise ValueError("Attempting to find a split "
+                                 "with an empty sample_mask")
+
+            # Split samples
+            if depth < max_depth and n_node_samples >= min_samples_split \
+               and n_node_samples >= 2 * min_samples_leaf:
+                feature, threshold, best_error, init_error = find_split(
+                    X, y, X_argsorted, sample_mask, n_node_samples,
+                    min_samples_leaf, max_features, criterion, random_state)
+            else:
+                feature = -1
+                init_error = _tree._error_at_leaf(y, sample_mask, criterion,
+                                                  n_node_samples)
+
+            value = criterion.init_value()
+
+            # Current node is leaf
+            if feature == -1:
+                self._add_leaf(parent, is_left_child, value,
+                               init_error, n_node_samples)
+
+            # Current node is internal node (= split node)
+            else:
+                # Sample mask is too sparse?
+                if n_node_samples / X.shape[0] <= min_density:
+                    X = X[sample_mask]
+                    X_argsorted = np.asfortranarray(
+                        np.argsort(X.T, axis=1).astype(np.int32).T)
+                    y = y[sample_mask]
+                    sample_mask = np.ones((X.shape[0],), dtype=np.bool)
+
+                # Split and and recurse
+                split = X[:, feature] <= threshold
+
+                node_id = self._add_split_node(parent, is_left_child, feature,
+                                               threshold, best_error,
+                                               init_error, n_node_samples,
+                                               value)
+
+                # left child recursion
+                recursive_partition(X, X_argsorted, y,
+                                    np.logical_and(split, sample_mask),
+                                    depth + 1, node_id, True)
+
+                # right child recursion
+                recursive_partition(X, X_argsorted, y,
+                                    np.logical_and(np.logical_not(split),
+                                                   sample_mask),
+                                    depth + 1, node_id, False)
+
+        # Setup auxiliary data structures and check input before
+        # recursive partitioning
+        if X.dtype != DTYPE or not np.isfortran(X):
+            X = np.asanyarray(X, dtype=DTYPE, order="F")
+
+        if y.dtype != DTYPE or not y.flags.contiguous:
+            y = np.ascontiguousarray(y, dtype=DTYPE)
+
+        if sample_mask is None:
+            sample_mask = np.ones((X.shape[0],), dtype=np.bool)
+
+        if X_argsorted is None:
+            X_argsorted = np.asfortranarray(
+                np.argsort(X.T, axis=1).astype(np.int32).T)
+
+        # Pre-allocate some space
+        if max_depth <= 10:
+            # allocate space for complete binary tree
+            init_capacity = (2 ** (max_depth + 1)) - 1
+        else:
+            # allocate fixed size and dynamically resize later
+            init_capacity = 2047
+
+        self._resize(init_capacity)
+
+        # Build the tree by recursive partitioning
+        recursive_partition(X, X_argsorted, y, sample_mask, 0, -1, False)
+
+        # Compactify the tree data structure
+        self._resize(self.node_count)
+
+        return self
+
+    def predict(self, X):
+        out = np.empty((X.shape[0], self.value.shape[1]), dtype=np.float64)
+
+        _tree._predict_tree(X,
+                            self.children,
+                            self.feature,
+                            self.threshold,
+                            self.value,
+                            out)
+
+        return out
+
+    def compute_feature_importances(self, method="gini"):
+        """Computes the importance of each feature (aka variable).
+
+        The following `method`s are supported:
+
+          * "gini" : The difference of the initial error and the error of the
+                     split times the number of samples that passed the node.
+          * "squared" : The empirical improvement in squared error.
+
+        Parameters
+        ----------
+        method : str, optional (default="gini")
+            The method to estimate the importance of a feature. Either "gini"
+            or "squared".
+        """
+        if method == "gini":
+            method = lambda node: (self.n_samples[node] * \
+                                     (self.init_error[node] -
+                                      self.best_error[node]))
+        elif method == "squared":
+            method = lambda node: (self.init_error[node] - \
+                                   self.best_error[node]) ** 2.0
+        else:
+            raise ValueError(
+                'Invalid value for method. Allowed string '
+                'values are "gini", or "mse".')
+
+        importances = np.zeros((self.n_features,), dtype=np.float64)
+
+        for node in range(self.node_count):
+            if (self.children[node, 0]
+                == self.children[node, 1]
+                == Tree.LEAF):
+                continue
+            else:
+                importances[self.feature[node]] += method(node)
+
+        normalizer = np.sum(importances)
+
+        if normalizer > 0.0:
+            # Avoid dividing by zero (e.g., when root is pure)
+            importances /= normalizer
+
+        return importances
+
+
 class BaseDecisionTree(BaseEstimator, SelectorMixin):
     """Base class for decision trees.
 
@@ -191,6 +591,22 @@ class BaseDecisionTree(BaseEstimator, SelectorMixin):
         self.find_split_ = _tree.TREE_SPLIT_BEST
 
         self.tree_ = None
+
+    def prune(self, n_leaves):
+        """
+        Prunes the decision tree
+
+        This method is necessary to avoid overfitting tree models. While broad
+        decision trees should be computed in the first place, pruning them
+        allows for optimal, smaller trees.
+
+        Parameters
+        ----------
+        n_leaves : int
+            the number of leaves of the pruned tree
+
+        """
+        self.tree_ = self.tree_.prune(n_leaves)
 
     def fit(self, X, y,
             sample_mask=None, X_argsorted=None,
@@ -849,4 +1265,60 @@ class ExtraTreeRegressor(DecisionTreeRegressor):
                                                  compute_importances,
                                                  random_state)
 
-        self.find_split_ = _tree.TREE_SPLIT_RANDOM
+        self.find_split_ = _tree._find_best_random_split
+
+
+def cv_scores_vs_n_leaves(clf, X, y, max_n_leaves=10, cv=10):
+    """
+    Cross validation of scores for different values of the decision tree.
+
+    This function allows to test what the optimal size of the decision tree
+    should be. It computes cross validated scores for different size of the
+    tree.
+
+    Parameters
+    ----------
+    clf: decision tree estimator object
+        The object to use to fit the data
+
+    X: array-like of shape at least 2D
+        The data to fit.
+
+    y: array-like
+        The target variable to try to predict.
+
+    max_n_leaves : int, optional (default=10)
+        maximum number of leaves of the tree to prune
+
+    cv : int, optional (default=10)
+        Size of the KFold cross validation generator
+
+    Returns
+    -------
+    scores : list of list of floats
+        The scores of the computed cross validated trees grouped by tree size.
+        scores[0] correspond to the values of trees of size max_n_leaves and
+        scores[-1] to the tree with just two leaves.
+
+    """
+
+    from ..base import clone
+    from ..cross_validation import KFold
+
+    scores = list()
+
+    kf = KFold(len(y), cv)
+    for train, test in kf:
+        estimator = clone(clf)
+        fitted = estimator.fit(X[train], y[train])
+
+        loc_scores = list()
+        for i in range(max_n_leaves, 1, -1):
+            #We loop from the bigger values to the smaller ones in order to be
+            #able to compute the original tree once, and then make it smaller
+            fitted.prune(n_leaves=i)
+            loc_scores.append(fitted.score(X[test], y[test]))
+
+        scores.append(loc_scores)
+
+    return zip(*scores)
