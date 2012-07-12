@@ -155,11 +155,13 @@ def _get_leaves(children):
     """Lists the leaves from the children array of a tree object"""
     return np.where(np.all(children == Tree.LEAF, axis=1))[0]
 
+
 def _get_terminal_nodes(children):
     """Lists the nodes that only have leaves as children"""
     leaves = _get_leaves(children)
     child_is_leaf = np.in1d(children, leaves).reshape(children.shape)
     return np.where(np.all(child_is_leaf, axis=1))[0]
+
 
 def _next_to_prune(tree, children=None):
     """Weakest link pruning for the subtree defined by children"""
@@ -317,7 +319,6 @@ class Tree(object):
 
         return new_tree
 
-
     @property
     def leaves(self):
         return _get_leaves(self.children)
@@ -398,7 +399,6 @@ class Tree(object):
             out_tree.node_count -= 2
 
         return out_tree
-
 
     def build(self, X, y, criterion, max_depth, min_samples_split,
               min_samples_leaf, min_density, max_features, random_state,
@@ -1332,4 +1332,3 @@ def cv_scores_vs_n_leaves(clf, X, y, max_n_leaves=10, n_iterations=10,
         scores.append(loc_scores)
 
     return zip(*scores)
-
