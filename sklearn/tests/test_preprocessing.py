@@ -22,6 +22,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import scale
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.preprocessing import add_dummy_feature
+from sklearn.preprocessing import resample
 
 from sklearn import datasets
 from sklearn.linear_model.stochastic_gradient import SGDClassifier
@@ -652,3 +653,33 @@ def test_add_dummy_feature_csr():
     X = add_dummy_feature(X)
     assert_true(sp.isspmatrix_csr(X), X)
     assert_array_equal(X.toarray(), [[1, 1, 0], [1, 0, 1], [1, 0, 1]])
+
+
+def test_resample():
+    y = np.array([1, 1, 1, 2, 2, 2, 3, 3, 3, 4])
+
+    indices = resample(y)
+    assert_equal(len(indices), 10)
+
+    indices = resample(y, scale=2)
+    assert_equal(len(indices), 2 * len(y))
+    indices = resample(y, scale=2, proba="balanced")
+    assert_equal(len(indices), 2 * len(y))
+    indices = resample(y, scale=2, proba={1: .3, 2: .1, 3: .5, 4: .1})
+    assert_equal(len(indices), 2 * len(y))
+
+    indices = resample(y, n=100)
+    assert_equal(len(indices), 100)
+    indices = resample(y, n=100, proba="balanced")
+    assert_equal(len(indices), 100)
+    indices = resample(y, n=100, proba={1: .3, 2: .1, 3: .5, 4: .1})
+    assert_equal(len(indices), 100)
+    indices = resample(y, n=100, proba={1: .3, 2: .7, 999: 0})
+    assert_equal(len(indices), 100)
+
+    assert_raises(ValueError, resample, y, scale=2, n=2)
+    assert_raises(ValueError, resample, y, scale=2, n=2)
+    assert_raises(ValueError, resample, y, proba="badstring")
+    assert_raises(ValueError, resample, y, proba={1: .5})
+    assert_raises(ValueError, resample, y, proba={1: .5, 5: .5})
+    assert_raises(ValueError, resample, y, proba={5: .3})

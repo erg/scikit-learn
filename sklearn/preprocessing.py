@@ -2,9 +2,10 @@
 #          Mathieu Blondel <mathieu@mblondel.org>
 #          Olivier Grisel <olivier.grisel@ensta.org>
 #          Andreas Mueller <amueller@ais.uni-bonn.de>
+#          Doug Coleman <doug.coleman@gmail.com>
 # License: BSD
 
-from collections import Sequence
+from collections import Sequence, defaultdict
 import warnings
 import numbers
 
@@ -1189,3 +1190,158 @@ def add_dummy_feature(X, value=1.0):
             return klass(X)
     else:
         return np.hstack((np.ones((n_samples, 1)) * value, X))
+
+
+def _stratified_samples(seqs, probs, n):
+    """Samples n values at random with replacement from a list of
+    array-likes where each list has a probability of being chosen from
+    an array according to an ordered list probs.
+    """
+    rs = np.random.rand(n)
+    if abs(sum(probs) - 1.0) > .0001:
+        raise ValueError("Label distribution probabilites must sum to 1")
+    probs = np.cumsum(probs)
+    seq_indices = np.array([np.searchsorted(probs, r) for r in rs])
+    lens = np.array([len(seqs[r]) for r in seq_indices])
+    if any(lens == 0):
+        raise ValueError("Array length is zero, nothing to sample")
+    rand_indices = [np.random.randint(0, l) for l in lens]
+    rands = [seqs[i0][i1] for i0, i1 in zip(seq_indices, rand_indices)]
+    return np.asarray(rands)
+
+
+def _equal_stratified_samples(seqs, n):
+    """Samples n values at random with replacement from a list of
+    array-likes where each list has an equal probability of being chosen
+    to yield a value. More efficient than _stratified_samples.
+    """
+    seq_indices = np.random.randint(0, len(seqs), n)
+    lens = np.array([len(seqs[r]) for r in seq_indices])
+    if any(lens == 0):
+        raise ValueError("Array length is zero, nothing to sample")
+    rand_indices = [np.random.randint(0, l) for l in lens]
+    rands = [seqs[i0][i1] for i0, i1 in zip(seq_indices, rand_indices)]
+    return np.asarray(rands)
+
+
+def _histogram_indices(seq):
+    """Collects a list of indices for each element occuring in an array-like
+    and returns a dict of lists.
+    """
+    indices = defaultdict(list)
+    for i, v in enumerate(seq):
+        indices[v].append(i)
+
+    for k in indices:
+        indices[k] = np.asarray(indices[k])
+    return indices
+
+
+def resample(y, proba=None, n=None, scale=None):
+    """Return an arbitrary size array of indices sampled with replacement
+    respecting a desired distribution of class labels.
+
+    Changing the distribution of labels is useful for tasks like constructing
+    balanced datasets for training, for oversampling and undersampling to
+    bring label proportions in line with prior information, or for
+    truncating a dataset to see what can still be learned.
+
+    The resulting indices can have the same label distribution, a balanced
+    distribution where labels are equally probable, or a custom distribution
+    based on a dict of label/probability pairs summing to one. In a probability
+    dict, labels with 0 probability are removed before checking that there are
+    labels of that class to sample. If there are no labels for a class, then
+    an error will be thrown. Note that even one sample is enough to allow the
+    sampling to continue, but that the resulting dataset will have the same
+    sample repeated every time the label is selected.
+
+    This function can also change the size of the dataset by returning
+    n samples or by scaling the size with a float. By default, a dataset
+    of the same sizes is returned. Caller cannot specify both n and scale.
+
+    Parameters
+    ----------
+    y : array-like of shape [n_samples]
+        Target values.
+
+    proba : None, "balanced", or dict (None by default)
+        None will keep the same label distribution.
+        "balanced" will output all labels with equal probability.
+        dict is label/probability pairs with the probability summing to 1.
+
+    n : integer (None by default)
+        Number of samples to return. Cannot be used with scale.
+        Leave as None for the default behavior of len(y) samples.
+
+    scale : float (None by default)
+        Scaling constant to upsize or downsize dataset. Cannot be used with n.
+        Leave as None for the default behaviour of no scaling.
+
+    Returns
+    -------
+
+    indices : array-like of shape [n_samples']
+        Indices sampled from the dataset respecting label distribution.
+
+    Examples
+    --------
+
+    Reduce the size of a dataset by half and keep the same label distribution.
+
+    >>> from sklearn.preprocessing import resample
+    >>> import numpy as np
+    >>> y = np.array([10, 12, 13, 11, 13, 11])
+    >>> indices = resample(y, scale=.5)
+    >>> indices, y[indices]
+    (array([3, 0, 4]), array([11, 10, 13]))
+
+    Scale the dataset to 1.5 times its size and balance the labels.
+
+    >>> from sklearn.preprocessing import resample
+    >>> y = np.array([30, 30, 30, 10, 20, 30])
+    >>> indices = resample(y, proba="balanced", scale=1.5)
+    >>> indices, y[indices]
+    (array([0, 5, 3, 4, 3, 2, 2, 4, 1]),
+     array([30, 30, 10, 20, 10, 30, 30, 20, 30]))
+
+    Sample 12 times with a probability dict.
+
+    >>> resample([1, 2, 3], proba={1:.1, 2:.1, 3:.8}, n=12)
+    array([0, 0, 2, 2, 0, 1, 1, 2, 2, 2, 2, 2])
+    """
+    y = np.asarray(y)
+
+    if n is not None and scale is not None:
+        raise ValueError("Pick either `n` or a `scale`, not both.")
+    if scale is not None:
+        n = int(len(y) * scale)
+    else:
+        n = n if n is not None else len(y)
+
+    if isinstance(proba, str) and proba is not "balanced":
+        raise ValueError("Invalid string for proba: %s" % proba)
+
+    if proba is None:
+        sample_indices = np.random.randint(0, len(y), n)
+    elif proba is "balanced":
+        index_dict = _histogram_indices(y)
+        indices = index_dict.values()
+        sample_indices = _equal_stratified_samples(indices, n)
+    else:
+        if not isinstance(proba, dict):
+            raise ValueError("Expected dict of label/probability pairs.")
+        # remove 0 probability pairs
+        proba = dict((k, v) for k, v in proba.items() if v > 0)
+        index_dict = _histogram_indices(y)
+        classes = np.asarray(proba.keys())
+        probs = np.asarray(proba.values())
+        diff = set(index_dict.keys()) - set(classes)
+        diff = set(classes) - set(index_dict.keys())
+        if len(diff) > 0:
+            raise ValueError("Can't make desired distribution: some labels in "
+                             "`proba` dict are not in `y`: %s" % list(diff))
+
+        indices = [index_dict[v] for v in classes]
+        sample_indices = _stratified_samples(indices, probs, n)
+
+    return sample_indices
