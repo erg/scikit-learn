@@ -1290,10 +1290,11 @@ def resample(y, proba=None, n=None, scale=None):
 
     >>> from sklearn.preprocessing import resample
     >>> import numpy as np
+    >>> np.random.seed(333)
     >>> y = np.array([10, 12, 13, 11, 13, 11])
     >>> indices = resample(y, scale=.5)
     >>> indices, y[indices]
-    (array([3, 0, 4]), array([11, 10, 13]))
+    (array([4, 4, 5]), array([13, 13, 11]))
 
     Scale the dataset to 1.5 times its size and balance the labels.
 
@@ -1301,13 +1302,12 @@ def resample(y, proba=None, n=None, scale=None):
     >>> y = np.array([30, 30, 30, 10, 20, 30])
     >>> indices = resample(y, proba="balanced", scale=1.5)
     >>> indices, y[indices]
-    (array([0, 5, 3, 4, 3, 2, 2, 4, 1]),
-     array([30, 30, 10, 20, 10, 30, 30, 20, 30]))
+    (array([2, 0, 0, 3, 4, 3, 1, 5, 3]), array([30, 30, 30, 10, 20, 10, 30, 30, 10]))
 
     Sample 12 times with a probability dict.
 
     >>> resample([1, 2, 3], proba={1:.1, 2:.1, 3:.8}, n=12)
-    array([0, 0, 2, 2, 0, 1, 1, 2, 2, 2, 2, 2])
+    array([0, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2, 1])
     """
     y = np.asarray(y)
 
