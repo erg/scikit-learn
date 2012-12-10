@@ -23,6 +23,7 @@ from sklearn.preprocessing import scale
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.preprocessing import add_dummy_feature
 from sklearn.preprocessing import resample
+from sklearn.preprocessing import _histogram
 
 from sklearn import datasets
 from sklearn.linear_model.stochastic_gradient import SGDClassifier
@@ -656,30 +657,87 @@ def test_add_dummy_feature_csr():
 
 
 def test_resample():
-    y = np.array([1, 1, 1, 2, 2, 2, 3, 3, 3, 4])
+    y = np.array([1, 2, 2, 3, 3, 3, 4, 4, 4, 4])
 
+    # Test same distribution
     indices = resample(y)
     assert_equal(len(indices), 10)
+    assert_array_equal(y, y[np.sort(indices)])
 
-    indices = resample(y, scale=2)
+    indices = resample(y, replace=False)
+    assert_equal(len(indices), 10)
+    assert_array_equal(y, y[np.sort(indices)])
+
+    indices = resample(y, replace=True)
+    assert_equal(len(indices), 10)
+
+    indices = resample(y, scale=2.0, replace=False)
+    assert_array_equal(y[np.sort(indices)], np.sort(np.concatenate([y] * 2)))
+
+    indices = resample(y, n_samples=20, replace=False)
+    assert_array_equal(y[np.sort(indices)], np.sort(np.concatenate([y] * 2)))
+
+    indices = resample(y, scale=2.0, replace=True)
+    assert_equal(len(indices), 20)
+
+    indices = resample(y, n_samples=20, replace=True)
+    assert_equal(len(indices), 20)
+
+    # Test `proba="balanced"`
+    indices = resample(y, scale=2, proba="balanced", replace=False)
     assert_equal(len(indices), 2 * len(y))
-    indices = resample(y, scale=2, proba="balanced")
+
+    indices = resample(y, n_samples=20, proba="balanced", replace=False)
     assert_equal(len(indices), 2 * len(y))
+
+    indices = resample(y, scale=2, proba="balanced", replace=True)
+    assert_equal(len(indices), 2 * len(y))
+
+    indices = resample(y, n_samples=20, proba="balanced", replace=True)
+    assert_equal(len(indices), 2 * len(y))
+
+    # Test `proba="oversample"`, `proba="undersample"`
+    indices = resample(y, proba="oversample", replace=False)
+    assert_equal(len(indices), 16)
+
+    indices = resample(y, proba="undersample", replace=False)
+    assert_equal(len(indices), 4)
+
+    indices = resample(y, proba="oversample", replace=True)
+    assert_equal(len(indices), 16)
+
+    indices = resample(y, proba="undersample", replace=True)
+    assert_equal(len(indices), 4)
+
+    # Test `proba=dict`
     indices = resample(y, scale=2, proba={1: .3, 2: .1, 3: .5, 4: .1})
     assert_equal(len(indices), 2 * len(y))
 
-    indices = resample(y, n=100)
-    assert_equal(len(indices), 100)
-    indices = resample(y, n=100, proba="balanced")
-    assert_equal(len(indices), 100)
-    indices = resample(y, n=100, proba={1: .3, 2: .1, 3: .5, 4: .1})
-    assert_equal(len(indices), 100)
-    indices = resample(y, n=100, proba={1: .3, 2: .7, 999: 0})
+    indices = resample(y, n_samples=100, proba={1: .3, 2: .1, 3: .5, 4: .1})
     assert_equal(len(indices), 100)
 
-    assert_raises(ValueError, resample, y, scale=2, n=2)
-    assert_raises(ValueError, resample, y, scale=2, n=2)
+    indices = resample(y, n_samples=100, proba={1: .3, 2: .7, 999: 0})
+    assert_equal(len(indices), 100)
+
+    indices = resample(y, scale=2, proba={1: .3, 2: .1, 3: .5, 4: .1}, replace=True)
+    assert_equal(len(indices), 2 * len(y))
+
+    indices = resample(y, n_samples=100, proba={1: .3, 2: .1, 3: .5, 4: .1}, replace=True)
+    assert_equal(len(indices), 100)
+
+    indices = resample(y, n_samples=100, proba={1: .3, 2: .7, 999: 0}, replace=True)
+    assert_equal(len(indices), 100)
+
+    # Test calls with bad arguments
+    assert_raises(ValueError, resample, y, scale=2, n_samples=2)
+    assert_raises(ValueError, resample, y, scale=2, n_samples=2)
+    assert_raises(ValueError, resample, y, scale=2, proba="oversample")
+    assert_raises(ValueError, resample, y, scale=2, proba="undersample")
+    assert_raises(ValueError, resample, y, n_samples=2, proba="oversample")
+    assert_raises(ValueError, resample, y, n_samples=2, proba="undersample")
+    assert_raises(ValueError, resample, y, n_samples=2, proba="badstring")
     assert_raises(ValueError, resample, y, proba="badstring")
     assert_raises(ValueError, resample, y, proba={1: .5})
     assert_raises(ValueError, resample, y, proba={1: .5, 5: .5})
     assert_raises(ValueError, resample, y, proba={5: .3})
+    assert_raises(ValueError, resample, y, proba={})

@@ -8,6 +8,7 @@
 from collections import Sequence, defaultdict
 import warnings
 import numbers
+import random
 
 import numpy as np
 import scipy.sparse as sp
@@ -15,6 +16,7 @@ import scipy.sparse as sp
 from .utils import check_arrays, array2d, atleast2d_or_csr, safe_asarray
 from .utils import warn_if_not_float
 from .utils.fixes import unique
+from utils.validation import check_random_state
 from .base import BaseEstimator, TransformerMixin
 
 from .utils.sparsefuncs import inplace_csr_row_normalize_l1
@@ -1192,36 +1194,11 @@ def add_dummy_feature(X, value=1.0):
         return np.hstack((np.ones((n_samples, 1)) * value, X))
 
 
-def _stratified_samples(seqs, probs, n):
-    """Samples n values at random with replacement from a list of
-    array-likes where each list has a probability of being chosen from
-    an array according to an ordered list probs.
-    """
-    rs = np.random.rand(n)
-    if abs(sum(probs) - 1.0) > .0001:
-        raise ValueError("Label distribution probabilites must sum to 1")
-    probs = np.cumsum(probs)
-    seq_indices = np.array([np.searchsorted(probs, r) for r in rs])
-    lens = np.array([len(seqs[r]) for r in seq_indices])
-    if any(lens == 0):
-        raise ValueError("Array length is zero, nothing to sample")
-    rand_indices = [np.random.randint(0, l) for l in lens]
-    rands = [seqs[i0][i1] for i0, i1 in zip(seq_indices, rand_indices)]
-    return np.asarray(rands)
-
-
-def _equal_stratified_samples(seqs, n):
-    """Samples n values at random with replacement from a list of
-    array-likes where each list has an equal probability of being chosen
-    to yield a value. More efficient than _stratified_samples.
-    """
-    seq_indices = np.random.randint(0, len(seqs), n)
-    lens = np.array([len(seqs[r]) for r in seq_indices])
-    if any(lens == 0):
-        raise ValueError("Array length is zero, nothing to sample")
-    rand_indices = [np.random.randint(0, l) for l in lens]
-    rands = [seqs[i0][i1] for i0, i1 in zip(seq_indices, rand_indices)]
-    return np.asarray(rands)
+def _histogram(seq):
+    counts = defaultdict(int)
+    for v in seq:
+        counts[v] += 1
+    return counts
 
 
 def _histogram_indices(seq):
@@ -1237,50 +1214,140 @@ def _histogram_indices(seq):
     return indices
 
 
-def resample(y, proba=None, n=None, scale=None):
-    """Return an arbitrary size array of indices sampled with replacement
-    respecting a desired distribution of class labels.
+def _circular_sample(array, n, random_state=None):
+    """Sample without replacement from array in a loop so that each sample is
+    taken once per loop except for the last loop, which takes n % len(array)
+    samples at random. Results are returned unshuffled.
+    """
+    random_state = check_random_state(random_state)
+    num_full_sets = n / len(array)
+    num_remainder = n % len(array)
+    sample_indices = np.empty(n, dtype='int')
+    index = 0
+    for i in xrange(num_full_sets):
+        sample_indices[index:index + len(array)] = np.arange(len(array))
+        index += len(array)
+    if num_remainder > 0:
+        #remainder_indices = random.sample(xrange(len(array)), num_remainder)
+        remainder_indices = np.arange(len(array))
+        random_state.shuffle(remainder_indices)
+        sample_indices[index:index + len(array)] = remainder_indices[0:num_remainder]
+    return sample_indices
+
+
+def _circular_samples(arrays, counts, random_state=None):
+    """Sample each array with a correspoinding count using the
+    _circular_sample function and return the shuffled results.
+    """
+    random_state = check_random_state(random_state)
+    samples = [array[_circular_sample(array, count, random_state)] for array, count in zip(arrays,counts)]
+    samples = np.concatenate(samples)
+    random_state.shuffle(samples)
+    return samples
+
+
+def _replacement_samples(arrays, counts, random_state=None):
+    """Samples count values at random with replacement where each count
+    corresponds to an array and returns the shuffled results.
+    """
+    random_state = check_random_state(random_state)
+    samples = [array[random_state.randint(0, len(array), count)] for array, count in zip(arrays,counts)]
+    samples = np.concatenate(samples)
+    random_state.shuffle(samples)
+    return samples
+
+
+def _fair_array_counts(arrays, n_samples, random_state=None):
+    """Tries to fairly divide arrays into n/len(arrays) counts each.
+    If this cannot be done fairly, +1 is added `remainder` times
+    to the counts for random arrays until a total of `n_samples` is
+    reached.
+    """
+    random_state = check_random_state(random_state)
+    num_classes = len(arrays)
+    if num_classes > n_samples:
+        raise ValueError("The number of classes is greater than the number of samples requested")
+    sample_size = n_samples / num_classes
+    sample_size_rem = n_samples % num_classes
+    counts = np.array([sample_size] * num_classes)
+    if sample_size_rem > 0:
+        counts[0:sample_size_rem] += 1
+    random_state.shuffle(counts)
+    return counts
+
+
+def resample(y, proba=None, n_samples=None, scale=None, replace=False,
+    random_state=None):
+    """Return an arbitrary sized array of indices sampled with or without
+    replacement and respectful of a desired distribution of class labels.
 
     Changing the distribution of labels is useful for tasks like constructing
     balanced datasets for training, for oversampling and undersampling to
-    bring label proportions in line with prior information, or for
-    truncating a dataset to see what can still be learned.
+    bring label proportions in line with prior information, for
+    truncating a dataset to see what can still be learned, or for growing a
+    dataset to stress test or benchmark an algorithm on realistic data.
 
-    The resulting indices can have the same label distribution, a balanced
-    distribution where labels are equally probable, or a custom distribution
-    based on a dict of label/probability pairs summing to one. In a probability
-    dict, labels with 0 probability are removed before checking that there are
-    labels of that class to sample. If there are no labels for a class, then
-    an error will be thrown. Note that even one sample is enough to allow the
-    sampling to continue, but that the resulting dataset will have the same
-    sample repeated every time the label is selected.
+    This function returns indices as a numpy array which can be used to index
+    into the `X` and `y` variables of a dataset. The resulting indices have
+    the same label distribution when `proba=None`, a distribution where the
+    final label counts are equal in number with `proba="balanced"`, an
+    oversampled or undersampled to the max or min number of classes when
+    `proba="oversampled"` or `proba="undersampled"`, or a dict of
+    label/probability pairs summing to one.  In a probability dict, labels
+    with 0 probability are removed before checking that there are labels of
+    that class to sample. If there are no labels for a class, then an error
+    will be thrown. Note that even one sample is enough to allow the
+    resampling to continue, but that the resulting dataset will have the same
+    sample repeated each time that label is sampled.
 
-    This function can also change the size of the dataset by returning
-    n samples or by scaling the size with a float. By default, a dataset
-    of the same sizes is returned. Caller cannot specify both n and scale.
+    This function can change the size of the dataset by returning `n_samples`
+    or by scaling the size with a float. By default, a dataset of the same
+    size is returned. The caller cannot specify both `n_samples` and `scale`
+    at once or with `proba="oversampled"` or `proba="undersampled"`. To get
+    behavior of balancing the classes to an arbitrary size, use
+    `proba="balanced"`.
+
+    The two sampling modes are sampling with replacement when `replace=True`,
+    in which sampled indices are immediately available to be chosen again,
+    or sampling without replacement, where all samples of a class are chosen
+    without being replaced. Note that when sampling without replacement, if
+    `scale` or `n_samples` cause a set of labels to be sampled for more than
+    the number of samples available, this function will sample all of the
+    values and then start over with the labels replenished, continuing in
+    this way until enough samples are drawn. The last iteration will choose
+    the remainder of samples at random without replacement.
 
     Parameters
     ----------
-    y : array-like of shape [n_samples]
+    y : array-like of shape [n_labels]
         Target values.
 
-    proba : None, "balanced", or dict (None by default)
+    proba : None, "balanced", "oversample", "undersample", or dict (None by default)
         None will keep the same label distribution.
         "balanced" will output all labels with equal probability.
+        "oversample" will oversample all of the classes less than the max length
+        "undersample" will undersample all of the classes more than the min length
         dict is label/probability pairs with the probability summing to 1.
 
-    n : integer (None by default)
+    n_samples : integer (None by default)
         Number of samples to return. Cannot be used with scale.
         Leave as None for the default behavior of len(y) samples.
 
     scale : float (None by default)
-        Scaling constant to upsize or downsize dataset. Cannot be used with n.
+        Scaling constant to upsize or downsize dataset. Cannot be used with
+        `n_samples`, `proba="oversample", or `proba="undersample"`.
         Leave as None for the default behaviour of no scaling.
+
+    replace : boolean (False by default)
+        Sample with replacement when True.
+
+    random_state : int or RandomState instance (None by default)
+        Control the shuffling for reproducible behavior.
 
     Returns
     -------
 
-    indices : array-like of shape [n_samples']
+    indices : array-like of shape [n_labels']
         Indices sampled from the dataset respecting label distribution.
 
     Examples
@@ -1290,58 +1357,108 @@ def resample(y, proba=None, n=None, scale=None):
 
     >>> from sklearn.preprocessing import resample
     >>> import numpy as np
-    >>> np.random.seed(333)
     >>> y = np.array([10, 12, 13, 11, 13, 11])
-    >>> indices = resample(y, scale=.5)
+    >>> indices = resample(y, scale=.5, random_state=333)
     >>> indices, y[indices]
-    (array([4, 4, 5]), array([13, 13, 11]))
+    (array([0, 3, 2]), array([10, 11, 13]))
 
-    Scale the dataset to 1.5 times its size and balance the labels.
+    Scale the dataset to 1.5 times its size and balance the labels using
+    sampling with replacement.
 
     >>> from sklearn.preprocessing import resample
     >>> y = np.array([30, 30, 30, 10, 20, 30])
-    >>> indices = resample(y, proba="balanced", scale=1.5)
+    >>> indices = resample(y, proba="balanced", scale=1.5, replace=True, random_state=335)
     >>> indices, y[indices]
-    (array([2, 0, 0, 3, 4, 3, 1, 5, 3]), array([30, 30, 30, 10, 20, 10, 30, 30, 10]))
+    (array([4, 1, 3, 3, 4, 1, 4, 0, 3]), array([20, 30, 10, 10, 20, 30, 20, 30, 10]))
 
-    Sample 12 times with a probability dict.
+    Oversample all classes to max label count of three samples each.
 
-    >>> resample([1, 2, 3], proba={1:.1, 2:.1, 3:.8}, n=12)
-    array([0, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2, 1])
+    >>> y = np.array([1, 2, 2, 3, 3, 3])
+    >>> indices = resample(y, proba="oversample", random_state=333)
+    >>> indices, y[indices]
+    (array([2, 0, 0, 0, 4, 2, 3, 5, 1]), array([2, 1, 1, 1, 3, 2, 3, 3, 2]))
+
+    Undersample all classes to the min label count of one sample each.
+
+    >>> y = np.array([1, 2, 2, 3, 3, 3])
+    >>> indices = resample(y, proba="undersample", random_state=333)
+    >>> indices, y[indices]
+    (array([2, 0, 5]), array([2, 1, 3]))
+
+    Sample twelve times with a probability dict.
+
+    >>> y = np.array([1, 2, 3])
+    >>> indices = resample(y, proba={1:.1, 2:.1, 3:.8}, n_samples=12, random_state=337)
+    >>> indices, y[indices]
+    (array([2, 2, 1, 2, 2, 0, 2, 2, 2, 2, 1, 2]), array([3, 3, 2, 3, 3, 1, 3, 3, 3, 3, 2, 3]))
     """
     y = np.asarray(y)
 
-    if n is not None and scale is not None:
-        raise ValueError("Pick either `n` or a `scale`, not both.")
-    if scale is not None:
-        n = int(len(y) * scale)
-    else:
-        n = n if n is not None else len(y)
+    if n_samples is not None and scale is not None:
+        raise ValueError("Pick either `n_samples` or a `scale`, not both.")
 
-    if isinstance(proba, str) and proba is not "balanced":
-        raise ValueError("Invalid string for proba: %s" % proba)
+    if isinstance(proba, str):
+        if proba not in ("balanced", "oversample", "undersample"):
+            raise ValueError("Invalid string for proba: %s" % proba)
+        if (n_samples or scale) and proba in ("oversample", "undersample"):
+            raise ValueError("`proba=%s` can't be used with `n_samples` or `scale`" % proba)
 
-    if proba is None:
-        sample_indices = np.random.randint(0, len(y), n)
-    elif proba is "balanced":
-        index_dict = _histogram_indices(y)
-        indices = index_dict.values()
-        sample_indices = _equal_stratified_samples(indices, n)
-    else:
+    elif proba:
         if not isinstance(proba, dict):
             raise ValueError("Expected dict of label/probability pairs.")
-        # remove 0 probability pairs
         proba = dict((k, v) for k, v in proba.items() if v > 0)
+
+    if scale is not None:
+        n_samples = int(len(y) * scale)
+    else:
+        n_samples = n_samples if n_samples is not None else len(y)
+
+    random_state = check_random_state(random_state)
+
+    if proba is None:
+        if replace:
+            sample_indices = random_state.randint(0, len(y), n_samples)
+        else:
+            sample_indices = _circular_sample(y, n_samples, random_state)
+            # circular_sample doesn't shuffle for efficiency, so shuffle here
+            random_state.shuffle(sample_indices)
+        return sample_indices
+
+    if proba in ("balanced", "oversample", "undersample"):
+        index_dict = _histogram_indices(y)
+        indices = index_dict.values()
+
+        if proba is "balanced":
+            counts = _fair_array_counts(indices, n_samples, random_state)
+        elif proba is "oversample":
+            max_count = max(len(a) for a in indices)
+            counts = [max_count] * len(indices)
+        elif proba is "undersample":
+            min_count = min(len(a) for a in indices)
+            counts = [min_count] * len(indices)
+    else:
+        # remove probability 0 pairs
         index_dict = _histogram_indices(y)
         classes = np.asarray(proba.keys())
         probs = np.asarray(proba.values())
-        diff = set(index_dict.keys()) - set(classes)
         diff = set(classes) - set(index_dict.keys())
         if len(diff) > 0:
             raise ValueError("Can't make desired distribution: some labels in "
                              "`proba` dict are not in `y`: %s" % list(diff))
 
-        indices = [index_dict[v] for v in classes]
-        sample_indices = _stratified_samples(indices, probs, n)
+        rs = random_state.rand(n_samples)
+        if abs(sum(probs) - 1.0) > .0001:
+            raise ValueError("Label distribution probabilites must sum to 1")
+        probs = np.cumsum(probs)
+        seq_indices = np.array([np.searchsorted(probs, r) for r in rs])
+        seq_index_histogram = _histogram(seq_indices)
+
+        indices = [index_dict[classes[k]] for k in seq_index_histogram]
+        counts = [seq_index_histogram[k] for k in seq_index_histogram]
+
+    if replace:
+        sample_indices = _replacement_samples(indices, counts, random_state)
+    else:
+        sample_indices = _circular_samples(indices, counts, random_state)
 
     return sample_indices
