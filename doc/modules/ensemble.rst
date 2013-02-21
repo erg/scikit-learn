@@ -144,6 +144,26 @@ are important, it might also be beneficial to adjust the ``min_density``
 parameter, that controls a heuristic for speeding up computations in
 each tree.  See :ref:`Complexity of trees<tree_complexity>` for details.
 
+When ``oob_score=True`` and ``bootstrap=True``, the out-of-bag score
+and out-of-bag decision function are calculated as the last step of
+training. Since each tree is trained on a bootstrap sample, out-of-bag
+refers to samples which are not in the training set for that tree.
+The score for a single tree is the percentage of correctly classified
+out-of-bag samples, and for the random forest, the ``oob_score_`` is
+the average of the scores from each tree.
+
+The decision function is an array with shape ``(n_samples, n_classes)``
+where each row contains a per-class classification rate for out-of-bag
+samples. A high classification rate indicates greater confidence, and
+samples which are misclassified by the decision function are more
+problematic for the random forest. Even if the classification rate for
+estimators predicting on out-of-bag samples is highly inaccurate, the
+random forest may still predict correctly since there are other
+estimators that may have been trained to correctly predict this sample.
+Note that if few estimators are used, then some samples may never be
+out-of-bag, and thus the entire row in the ``oob_decision_function_``
+will be NaNs.
+
 Parallelization
 ---------------
 

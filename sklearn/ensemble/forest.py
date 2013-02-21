@@ -708,7 +708,8 @@ class RandomForestClassifier(ForestClassifier):
 
     oob_score : bool
         Whether to use out-of-bag samples to estimate
-        the generalization error.
+        the generalization error. Rows that are in every bootstrap
+        sampling will produce a row of NaNs in the `oob_decision_function_`.
 
     n_jobs : integer, optional (default=1)
         The number of jobs to run in parallel. If -1, then the number of jobs
@@ -849,8 +850,9 @@ class RandomForestRegressor(ForestRegressor):
         Whether bootstrap samples are used when building trees.
 
     oob_score : bool
-        whether to use out-of-bag samples to estimate
-        the generalization error.
+        Whether to use out-of-bag samples to estimate
+        the generalization error. Rows that are in every bootstrap
+        sampling will produce a row of NaNs in the `oob_decision_function_`.
 
     n_jobs : integer, optional (default=1)
         The number of jobs to run in parallel. If -1, then the number of jobs
@@ -984,7 +986,8 @@ class ExtraTreesClassifier(ForestClassifier):
 
     oob_score : bool
         Whether to use out-of-bag samples to estimate
-        the generalization error.
+        the generalization error. Rows that are in every bootstrap
+        sampling will produce a row of NaNs in the `oob_decision_function_`.
 
     n_jobs : integer, optional (default=1)
         The number of jobs to run in parallel. If -1, then the number of jobs
@@ -1131,7 +1134,8 @@ class ExtraTreesRegressor(ForestRegressor):
 
     oob_score : bool
         Whether to use out-of-bag samples to estimate
-        the generalization error.
+        the generalization error. Rows that are in every bootstrap
+        sampling will produce a row of NaNs in the `oob_decision_function_`.
 
     n_jobs : integer, optional (default=1)
         The number of jobs to run in parallel. If -1, then the number of jobs
