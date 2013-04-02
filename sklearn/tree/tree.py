@@ -1284,7 +1284,7 @@ class ExtraTreeRegressor(DecisionTreeRegressor):
                                                  compute_importances,
                                                  random_state)
 
-        self.find_split_ = _tree._find_best_random_split
+        self.find_split_ = _tree.TREE_SPLIT_RANDOM
 
 
 def prune_path(clf, X, y, max_n_leaves=10, n_iterations=10,
