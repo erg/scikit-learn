@@ -54,6 +54,7 @@ from ..tree import (DecisionTreeClassifier, DecisionTreeRegressor,
 from ..tree._tree import DTYPE, DOUBLE
 from ..utils import array2d, check_random_state, check_arrays, safe_asarray
 from ..utils.fixes import bincount
+from ..utils.class_weight import compute_class_weight
 
 
 from .base import BaseEnsemble
@@ -66,7 +67,7 @@ __all__ = ["RandomForestClassifier",
 MAX_INT = np.iinfo(np.int32).max
 
 
-def _parallel_build_trees(n_trees, forest, X, y, sample_weight,
+def _parallel_build_trees(n_trees, forest, X, y, classes, class_weight, sample_weight,
                           sample_mask, X_argsorted, seeds, verbose):
     """Private function used to build a batch of trees within a job."""
     trees = []
@@ -94,6 +95,11 @@ def _parallel_build_trees(n_trees, forest, X, y, sample_weight,
             curr_sample_mask = sample_mask.copy()
             curr_sample_mask[sample_counts == 0] = False
 
+            if classes is not None:
+                classes_of_y = np.concatenate(np.searchsorted(classes, y))
+                class_weight_vector = class_weight[classes_of_y]
+                curr_sample_weight *= class_weight_vector
+
             tree.fit(X, y,
                      sample_weight=curr_sample_weight,
                      sample_mask=curr_sample_mask,
@@ -103,6 +109,12 @@ def _parallel_build_trees(n_trees, forest, X, y, sample_weight,
             tree.indices_ = curr_sample_mask
 
         else:
+            if classes is not None:
+                classes_of_y = np.searchsorted(classes, y)
+                class_weight_vector = class_weight[classes_of_y]
+            if sample_weight is not None:
+                sample_weight *= class_weight_vector
+
             tree.fit(X, y,
                      sample_weight=sample_weight,
                      sample_mask=sample_mask,
@@ -223,6 +235,7 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
                  bootstrap=False,
                  compute_importances=False,
                  oob_score=False,
+                 class_weight=None,
                  n_jobs=1,
                  random_state=None,
                  verbose=0):
@@ -241,6 +254,7 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
 
         self.compute_importances = compute_importances
         self.oob_score = oob_score
+        self.class_weight = class_weight
         self.n_jobs = n_jobs
         self.random_state = random_state
 
@@ -332,25 +346,35 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
             if self.n_outputs_ == 1:
                 self.classes_ = np.unique(y)
                 self.n_classes_ = len(self.classes_)
+                self.class_weight = compute_class_weight(self.class_weight,
+                                                       self.classes_, y)
 
             else:
                 self.classes_ = []
                 self.n_classes_ = []
+                self.class_weight = []
 
                 for k in xrange(self.n_outputs_):
                     unique = np.unique(y[:, k])
                     self.classes_.append(unique)
                     self.n_classes_.append(unique.shape[0])
                     y[:, k] = np.searchsorted(unique, y[:, k])
+                    self.class_weight.append(compute_class_weight(self.class_weight,
+                                                           np.asarray(self.classes_), y[:,k]))
 
         else:
             if self.n_outputs_ == 1:
                 self.classes_ = None
                 self.n_classes_ = 1
+                self.class_weight = None
 
             else:
                 self.classes_ = [None] * self.n_outputs_
                 self.n_classes_ = [1] * self.n_outputs_
+                self.class_weight = []
+                for k in xrange(self.n_outputs_):
+                    self.class_weight.append(compute_class_weight(self.class_weight,
+                                                                       np.asarray(self.classes_), y[:,k]))
 
         if getattr(y, "dtype", None) != DOUBLE or not y.flags.contiguous:
             y = np.ascontiguousarray(y, dtype=DOUBLE)
@@ -368,6 +392,8 @@ class BaseForest(six.with_metaclass(ABCMeta, BaseEnsemble,
                 self,
                 X,
                 y,
+                self.classes_,
+                self.class_weight,
                 sample_weight,
                 sample_mask,
                 X_argsorted,
@@ -499,6 +525,7 @@ class ForestClassifier(six.with_metaclass(ABCMeta, BaseForest,
                  bootstrap=False,
                  compute_importances=False,
                  oob_score=False,
+                 class_weight=None,
                  n_jobs=1,
                  random_state=None,
                  verbose=0):
@@ -510,6 +537,7 @@ class ForestClassifier(six.with_metaclass(ABCMeta, BaseForest,
             bootstrap=bootstrap,
             compute_importances=compute_importances,
             oob_score=oob_score,
+            class_weight=class_weight,
             n_jobs=n_jobs,
             random_state=random_state,
             verbose=verbose)
@@ -817,6 +845,7 @@ class RandomForestClassifier(ForestClassifier):
                  oob_score=False,
                  n_jobs=1,
                  random_state=None,
+                 class_weight=None,
                  verbose=0):
         super(RandomForestClassifier, self).__init__(
             base_estimator=DecisionTreeClassifier(),
@@ -827,6 +856,7 @@ class RandomForestClassifier(ForestClassifier):
             bootstrap=bootstrap,
             compute_importances=compute_importances,
             oob_score=oob_score,
+            class_weight=class_weight,
             n_jobs=n_jobs,
             random_state=random_state,
             verbose=verbose)

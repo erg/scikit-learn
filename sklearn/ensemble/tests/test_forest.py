@@ -442,6 +442,33 @@ def test_parallel_train():
         assert_true(np.allclose(proba1, proba2))
 
 
+def test_class_weight():
+    rng = np.random.RandomState(12321)
+    X = rng.randn(100, 1000)
+    y = rng.randint(0, 2, 100)
+
+    clfs = [
+        RandomForestClassifier(n_estimators=20,
+                               n_jobs=n_jobs,
+                               class_weight={0:0,1:0},
+                               random_state=12345)
+        for n_jobs in range(1, 9)
+    ]
+
+    for clf in clfs:
+        clf.fit(X, y)
+
+    X2 = rng.randn(100, 1000)
+
+    probas = []
+    for clf in clfs:
+        proba = clf.predict_proba(X2)
+        probas.append(proba)
+
+    for proba1, proba2 in zip(probas, probas[1:]):
+        assert_true(np.allclose(proba1, proba2))
+
+
 if __name__ == "__main__":
     import nose
     nose.runmodule()

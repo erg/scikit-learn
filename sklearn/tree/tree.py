@@ -66,6 +66,7 @@ class BaseDecisionTree(six.with_metaclass(ABCMeta, BaseEstimator,
                  min_density,
                  max_features,
                  compute_importances,
+                 class_weight,
                  random_state):
         self.criterion = criterion
         self.max_depth = max_depth
@@ -81,6 +82,7 @@ class BaseDecisionTree(six.with_metaclass(ABCMeta, BaseEstimator,
                  "parameter will be removed in 0.15.", DeprecationWarning)
 
         self.compute_importances = compute_importances
+        self.class_weight = class_weight
         self.random_state = random_state
 
         self.n_features_ = None
@@ -266,6 +268,7 @@ class BaseDecisionTree(six.with_metaclass(ABCMeta, BaseEstimator,
                                 self.find_split_, random_state)
 
         self.tree_.build(X, y,
+                         class_weight=self.class_weight,
                          sample_weight=sample_weight,
                          sample_mask=sample_mask,
                          X_argsorted=X_argsorted)
@@ -460,6 +463,7 @@ class DecisionTreeClassifier(BaseDecisionTree, ClassifierMixin):
                  min_density=0.1,
                  max_features=None,
                  compute_importances=False,
+                 class_weight=None,
                  random_state=None):
         super(DecisionTreeClassifier, self).__init__(criterion,
                                                      max_depth,
@@ -468,6 +472,7 @@ class DecisionTreeClassifier(BaseDecisionTree, ClassifierMixin):
                                                      min_density,
                                                      max_features,
                                                      compute_importances,
+                                                     class_weight,
                                                      random_state)
 
     def predict_proba(self, X):
@@ -650,6 +655,7 @@ class DecisionTreeRegressor(BaseDecisionTree, RegressorMixin):
                  min_density=0.1,
                  max_features=None,
                  compute_importances=False,
+                 class_weight=None,
                  random_state=None):
         super(DecisionTreeRegressor, self).__init__(criterion,
                                                     max_depth,
@@ -658,6 +664,7 @@ class DecisionTreeRegressor(BaseDecisionTree, RegressorMixin):
                                                     min_density,
                                                     max_features,
                                                     compute_importances,
+                                                    class_weight,
                                                     random_state)
 
 
@@ -691,6 +698,7 @@ class ExtraTreeClassifier(DecisionTreeClassifier):
                  min_density=0.1,
                  max_features="auto",
                  compute_importances=False,
+                 class_weight=None,
                  random_state=None):
         super(ExtraTreeClassifier, self).__init__(criterion,
                                                   max_depth,
@@ -699,6 +707,7 @@ class ExtraTreeClassifier(DecisionTreeClassifier):
                                                   min_density,
                                                   max_features,
                                                   compute_importances,
+                                                  class_weight,
                                                   random_state)
 
         self.find_split_ = _tree.TREE_SPLIT_RANDOM
@@ -738,6 +747,7 @@ class ExtraTreeRegressor(DecisionTreeRegressor):
                  min_density=0.1,
                  max_features="auto",
                  compute_importances=False,
+                 class_weight=None,
                  random_state=None):
         super(ExtraTreeRegressor, self).__init__(criterion,
                                                  max_depth,
@@ -746,6 +756,7 @@ class ExtraTreeRegressor(DecisionTreeRegressor):
                                                  min_density,
                                                  max_features,
                                                  compute_importances,
+                                                 class_weight,
                                                  random_state)
 
         self.find_split_ = _tree.TREE_SPLIT_RANDOM

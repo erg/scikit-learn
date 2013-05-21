@@ -369,6 +369,7 @@ cdef class Tree:
             self.node_count = capacity
 
     cpdef build(self, np.ndarray X, np.ndarray y,
+                np.ndarray class_weight=None,
                 np.ndarray sample_mask=None,
                 np.ndarray X_argsorted=None,
                 np.ndarray sample_weight=None):
@@ -424,6 +425,7 @@ cdef class Tree:
         self.recursive_partition(X,
                                  X_argsorted,
                                  y,
+                                 class_weight,
                                  sample_weight,
                                  sample_mask,
                                  n_node_samples,
@@ -441,6 +443,7 @@ cdef class Tree:
                                   np.ndarray[DTYPE_t, ndim=2, mode="fortran"] X,
                                   np.ndarray[np.int32_t, ndim=2, mode="fortran"] X_argsorted,
                                   np.ndarray[DOUBLE_t, ndim=2, mode="c"] y,
+                                  np.ndarray[DOUBLE_t, ndim=1, mode="c"] class_weight,
                                   np.ndarray[DOUBLE_t, ndim=1, mode="c"] sample_weight,
                                   np.ndarray sample_mask,
                                   int n_node_samples,
@@ -457,6 +460,9 @@ cdef class Tree:
         cdef int* X_argsorted_ptr = <int*> X_argsorted.data
         cdef DOUBLE_t* y_ptr = <DOUBLE_t*> y.data
         cdef BOOL_t* sample_mask_ptr = <BOOL_t*> sample_mask.data
+        cdef DOUBLE_t* class_weight_ptr = NULL
+        if class_weight is not None:
+            class_weight_ptr = <DOUBLE_t*> class_weight.data
 
         cdef DOUBLE_t* sample_weight_ptr = NULL
         if sample_weight is not None:
@@ -499,6 +505,7 @@ cdef class Tree:
             self.find_split(X_ptr, X_stride,
                             X_argsorted_ptr, X_argsorted_stride,
                             y_ptr, y_stride,
+                            class_weight_ptr,
                             sample_weight_ptr,
                             sample_mask_ptr,
                             n_node_samples,
@@ -584,8 +591,9 @@ cdef class Tree:
                                           init_error, n_node_samples)
 
             # Left child recursion
-            self.recursive_partition(X, X_argsorted,
-                                     y, sample_weight,
+            self.recursive_partition(X, X_argsorted, y,
+                                     class_weight,
+                                     sample_weight,
                                      sample_mask_left,
                                      n_node_samples_left,
                                      weighted_n_node_samples_left,
@@ -593,8 +601,9 @@ cdef class Tree:
                                      True, buffer_value)
 
             # Right child recursion
-            self.recursive_partition(X, X_argsorted,
-                                     y, sample_weight,
+            self.recursive_partition(X, X_argsorted, y,
+                                     class_weight,
+                                     sample_weight,
                                      sample_mask_right,
                                      n_node_samples_right,
                                      weighted_n_node_samples_right,
@@ -665,6 +674,7 @@ cdef class Tree:
     cdef void find_split(self, DTYPE_t* X_ptr, Py_ssize_t X_stride,
                          int* X_argsorted_ptr, Py_ssize_t X_argsorted_stride,
                          DOUBLE_t* y_ptr, Py_ssize_t y_stride,
+                         DOUBLE_t* class_weight_ptr,
                          DOUBLE_t* sample_weight_ptr,
                          BOOL_t* sample_mask_ptr,
                          int n_node_samples,
@@ -678,6 +688,7 @@ cdef class Tree:
             self.find_best_split(X_ptr, X_stride,
                                  X_argsorted_ptr, X_argsorted_stride,
                                  y_ptr, y_stride,
+                                 class_weight_ptr,
                                  sample_weight_ptr,
                                  sample_mask_ptr,
                                  n_node_samples,
@@ -699,6 +710,7 @@ cdef class Tree:
     cdef void find_best_split(self, DTYPE_t* X_ptr, Py_ssize_t X_stride,
                               int* X_argsorted_ptr, Py_ssize_t X_argsorted_stride,
                               DOUBLE_t* y_ptr, Py_ssize_t y_stride,
+                              DOUBLE_t* class_weight_ptr,
                               DOUBLE_t* sample_weight_ptr,
                               BOOL_t* sample_mask_ptr,
                               int n_node_samples,

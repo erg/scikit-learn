@@ -88,6 +88,7 @@ cdef class Tree:
     cdef void resize(self, int capacity=*)
 
     cpdef build(self, np.ndarray X, np.ndarray y,
+                np.ndarray class_weight=*,
                 np.ndarray sample_mask=*,
                 np.ndarray X_argsorted=*,
                 np.ndarray sample_weight=*)
@@ -96,6 +97,7 @@ cdef class Tree:
                                   np.ndarray[DTYPE_t, ndim=2, mode="fortran"] X,
                                   np.ndarray[np.int32_t, ndim=2, mode="fortran"] X_argsorted,
                                   np.ndarray[DOUBLE_t, ndim=2, mode="c"] y,
+                                  np.ndarray[DOUBLE_t, ndim=1, mode="c"] class_weight,
                                   np.ndarray[DOUBLE_t, ndim=1, mode="c"] sample_weight,
                                   np.ndarray sample_mask,
                                   int n_node_samples,
@@ -116,6 +118,7 @@ cdef class Tree:
     cdef void find_split(self, DTYPE_t* X_ptr, Py_ssize_t X_stride,
                          int* X_argsorted_ptr, Py_ssize_t X_argsorted_stride,
                          DOUBLE_t* y_ptr, Py_ssize_t y_stride,
+                         DOUBLE_t* class_weight_ptr,
                          DOUBLE_t* sample_weight_ptr,
                          BOOL_t* sample_mask_ptr,
                          int n_node_samples,
@@ -129,6 +132,7 @@ cdef class Tree:
     cdef void find_best_split(self, DTYPE_t* X_ptr, Py_ssize_t X_stride,
                               int* X_argsorted_ptr, Py_ssize_t X_argsorted_stride,
                               DOUBLE_t* y_ptr, Py_ssize_t y_stride,
+                              DOUBLE_t* class_weight_ptr,
                               DOUBLE_t* sample_weight_ptr,
                               BOOL_t* sample_mask_ptr,
                               int n_node_samples,
