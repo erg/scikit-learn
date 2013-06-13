@@ -534,7 +534,7 @@ def binarize(X, threshold=0.0, copy=True):
         un-necessary copy.
 
     threshold : float, optional (0.0 by default)
-        The lower bound that triggers feature values to be replaced by 1.0.
+        The lower bound that triggers feature values to be replaced by 1.
 
     copy : boolean, optional, default is True
         set to False to perform inplace binarization and avoid a copy
@@ -570,8 +570,8 @@ def binarize(X, threshold=0.0, copy=True):
 class Binarizer(BaseEstimator, TransformerMixin):
     """Binarize data (set feature values to 0 or 1) according to a threshold
 
-    The default threshold is 0.0 so that any non-zero values are set to 1.0
-    and zeros are left untouched.
+    Values greater than the threshold map to 1, while values less than
+    or equal to the threshold map to 0.
 
     Binarization is a common operation on text count data where the
     analyst can decide to only consider the presence or absence of a
@@ -584,7 +584,7 @@ class Binarizer(BaseEstimator, TransformerMixin):
     Parameters
     ----------
     threshold : float, optional (0.0 by default)
-        The lower bound that triggers feature values to be replaced by 1.0.
+        The lower bound that triggers feature values to be replaced by 1.
 
     copy : boolean, optional, default is True
         set to False to perform inplace binarization and avoid a copy (if
